@@ -3,6 +3,8 @@
 
   const API = 'https://api.github.com';
   const LS_KEY = 'docreader.config';
+  const FONT_KEY = 'docreader.fontsize';
+  const FONT_MIN = 12, FONT_MAX = 28, FONT_STEP = 2, FONT_DEFAULT = 16;
   const $ = (id) => document.getElementById(id);
 
   const els = {
@@ -11,6 +13,7 @@
     list: $('fileList'), content: $('content'), filter: $('filter'),
     sidebar: $('sidebar'), backdrop: $('backdrop'),
     menuBtn: $('menuBtn'), settingsBtn: $('settingsBtn'),
+    fontDec: $('fontDec'), fontInc: $('fontInc'),
   };
 
   marked.setOptions({ gfm: true, breaks: false });
@@ -27,6 +30,22 @@
   function show(which) {
     els.setup.classList.toggle('hidden', which !== 'setup');
     els.reader.classList.toggle('hidden', which !== 'reader');
+  }
+
+  // ---------- font size ----------
+  function loadFontSize() {
+    const n = parseInt(localStorage.getItem(FONT_KEY), 10);
+    return Number.isFinite(n) ? Math.min(FONT_MAX, Math.max(FONT_MIN, n)) : FONT_DEFAULT;
+  }
+  function applyFontSize(px) {
+    els.content.style.setProperty('--md-font-size', px + 'px');
+    localStorage.setItem(FONT_KEY, String(px));
+    els.fontDec.disabled = px <= FONT_MIN;
+    els.fontInc.disabled = px >= FONT_MAX;
+  }
+  function bumpFontSize(delta) {
+    const next = Math.min(FONT_MAX, Math.max(FONT_MIN, loadFontSize() + delta));
+    applyFontSize(next);
   }
 
   // ---------- github api ----------
@@ -190,9 +209,12 @@
   els.menuBtn.addEventListener('click', () => openSidebar(!els.sidebar.classList.contains('open')));
   els.backdrop.addEventListener('click', () => openSidebar(false));
   els.filter.addEventListener('input', () => renderList(els.filter.value));
+  els.fontDec.addEventListener('click', () => bumpFontSize(-FONT_STEP));
+  els.fontInc.addEventListener('click', () => bumpFontSize(FONT_STEP));
   window.addEventListener('hashchange', onRoute);
 
   // ---------- init ----------
+  applyFontSize(loadFontSize());
   cfg = loadCfg();
   if (cfg && cfg.token && cfg.owner && cfg.repo) startReader();
   else show('setup');
