@@ -1,0 +1,10 @@
+{
+  "name": "Doc Reader",
+  "short_name": "Docs",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "icons": []
+}
