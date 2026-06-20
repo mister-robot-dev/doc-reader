@@ -85,7 +85,13 @@
       const blob = await ghApi(`/repos/${cfg.owner}/${cfg.repo}/git/blobs/${item.sha}`);
       const md = b64ToText(blob.content);
       els.content.innerHTML = DOMPurify.sanitize(marked.parse(md));
-      els.content.querySelectorAll('pre code').forEach((el) => { try { hljs.highlightElement(el); } catch (_) {} });
+      // Подсвечиваем только блоки с явно указанным языком (```kotlin и т.п.).
+      // Простые ``` без языка (напр. ASCII-схемы) оставляем обычным читаемым текстом.
+      els.content.querySelectorAll('pre code').forEach((el) => {
+        if ([...el.classList].some((c) => c.startsWith('language-'))) {
+          try { hljs.highlightElement(el); } catch (_) {}
+        }
+      });
       els.docTitle.textContent = item.name;
       window.scrollTo(0, 0);
       renderList(els.filter.value);
