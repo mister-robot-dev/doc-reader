@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -7,59 +7,98 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Doc Reader">
-  <meta name="theme-color" content="#0d1117">
+  <meta id="themeColor" name="theme-color" content="#0d1117">
   <title>Doc Reader</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown.min.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/styles/github.min.css" media="(prefers-color-scheme: light)">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
+  <link id="mdLight" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown-light.min.css" media="(prefers-color-scheme: light)">
+  <link id="mdDark" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown-dark.min.css" media="(prefers-color-scheme: dark)">
+  <link id="hlLight" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/styles/github.min.css" media="(prefers-color-scheme: light)">
+  <link id="hlDark" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
   <link rel="stylesheet" href="styles.css">
+  <script>
+    // Apply a saved manual theme before first paint to avoid a flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('docreader.theme');
+        if (t !== 'light' && t !== 'dark') return;
+        document.documentElement.setAttribute('data-theme', t);
+        var dark = t === 'dark';
+        ['mdLight', 'hlLight'].forEach(function (id) { var e = document.getElementById(id); if (e) e.media = dark ? 'not all' : 'all'; });
+        ['mdDark', 'hlDark'].forEach(function (id) { var e = document.getElementById(id); if (e) e.media = dark ? 'all' : 'not all'; });
+      } catch (_) {}
+    })();
+  </script>
 </head>
 <body>
-  <!-- ===== Экран подключения ===== -->
+  <!-- ===== Connect screen ===== -->
   <section id="setup" class="setup hidden">
     <form id="setupForm" class="setup-card" autocomplete="off">
       <h1>Doc Reader</h1>
-      <p class="muted small">Подключи приватный репозиторий с .md файлами. Токен хранится только в этом браузере.</p>
+      <p class="muted small">Connect a private repository with .md files. The token is stored only in this browser.</p>
 
-      <label>GitHub владелец (логин / организация)
+      <label>GitHub owner (login / organization)
         <input name="owner" required placeholder="octocat" autocapitalize="off" autocorrect="off" spellcheck="false">
       </label>
-      <label>Репозиторий
+      <label>Repository
         <input name="repo" required placeholder="my-docs" autocapitalize="off" autocorrect="off" spellcheck="false">
       </label>
-      <label>Ветка (необязательно)
-        <input name="branch" placeholder="по умолчанию — главная ветка" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <label>Branch (optional)
+        <input name="branch" placeholder="defaults to the main branch" autocapitalize="off" autocorrect="off" spellcheck="false">
       </label>
-      <label>Папка внутри репо (необязательно)
-        <input name="path" placeholder="напр. docs — пусто = весь репо" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <label>Folder inside the repo (optional)
+        <input name="path" placeholder="e.g. docs — empty = whole repo" autocapitalize="off" autocorrect="off" spellcheck="false">
       </label>
       <label>Fine-grained token (Contents: Read-only)
         <input name="token" type="password" required placeholder="github_pat_…" autocapitalize="off" autocorrect="off" spellcheck="false">
       </label>
 
       <p id="setupError" class="error"></p>
-      <button type="submit">Подключить</button>
-      <p class="muted small">Токен: GitHub → Settings → Developer settings → Fine-grained tokens. Доступ — только нужный репозиторий, право <b>Contents = Read-only</b>.</p>
+      <button type="submit">Connect</button>
+      <p class="muted small">Token: GitHub → Settings → Developer settings → Fine-grained tokens. Grant access to the single repo you need, with <b>Contents = Read-only</b>.</p>
     </form>
   </section>
 
-  <!-- ===== Ридер ===== -->
+  <!-- ===== Reader ===== -->
   <div id="reader" class="hidden">
     <header class="topbar">
-      <button id="menuBtn" class="icon-btn" aria-label="Меню">☰</button>
+      <button id="menuBtn" class="icon-btn" aria-label="Menu">☰</button>
       <h1 id="docTitle">Doc Reader</h1>
-      <button id="fontDec" class="icon-btn font-btn" aria-label="Уменьшить текст" title="Уменьшить текст">A−</button>
-      <button id="fontInc" class="icon-btn font-btn" aria-label="Увеличить текст" title="Увеличить текст">A+</button>
-      <button id="settingsBtn" class="icon-btn" aria-label="Настройки">⚙</button>
+      <button id="settingsToggle" class="icon-btn settings-toggle" aria-label="Settings" aria-expanded="false">⚙<span class="caret">▾</span></button>
     </header>
+    <div id="settingsPanel" class="settings-panel hidden">
+      <div class="settings-row">
+        <span class="settings-label">Text size</span>
+        <span class="font-controls">
+          <button id="fontDec" class="icon-btn font-btn" aria-label="Decrease text" title="Decrease text">−</button>
+          <span id="fontVal" class="font-val">16px</span>
+          <button id="fontInc" class="icon-btn font-btn" aria-label="Increase text" title="Increase text">+</button>
+        </span>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">Theme</span>
+        <span id="themeControls" class="seg">
+          <button class="seg-btn" type="button" data-theme="light">Light</button>
+          <button class="seg-btn" type="button" data-theme="dark">Dark</button>
+          <button class="seg-btn" type="button" data-theme="auto">Auto</button>
+        </span>
+      </div>
+    </div>
     <div class="layout">
       <aside id="sidebar" class="sidebar">
-        <input id="filter" class="filter" type="search" placeholder="Поиск…" autocomplete="off">
+        <input id="filter" class="filter" type="search" placeholder="Search…" autocomplete="off">
         <nav id="fileList" class="file-list"></nav>
+        <div class="sidebar-footer">
+          <button id="authBtn" class="sidebar-btn" type="button">
+            <svg class="ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+            <span>Connect settings</span>
+          </button>
+        </div>
       </aside>
       <div id="backdrop" class="backdrop"></div>
-      <main id="content" class="content markdown-body"><p class="muted">Загрузка…</p></main>
+      <main id="content" class="content markdown-body"><p class="muted">Loading…</p></main>
     </div>
   </div>
 
