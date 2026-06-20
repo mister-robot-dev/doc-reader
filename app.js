@@ -14,6 +14,7 @@
     reader: $('reader'), docTitle: $('docTitle'),
     list: $('fileList'), content: $('content'), filter: $('filter'),
     sidebar: $('sidebar'), backdrop: $('backdrop'),
+    toc: $('toc'), tocList: $('tocList'), tocBtn: $('tocBtn'),
     menuBtn: $('menuBtn'), authBtn: $('authBtn'),
     settingsToggle: $('settingsToggle'), settingsPanel: $('settingsPanel'),
     fontDec: $('fontDec'), fontInc: $('fontInc'), fontVal: $('fontVal'),
@@ -25,6 +26,7 @@
 
   let cfg = null;     // { owner, repo, branch, path, token }
   let files = [];     // [{ path, sha, name, group }]
+  let tocObserver = null;   // IntersectionObserver for the outline scroll-spy
 
   // ---------- config ----------
   function loadCfg() {
@@ -136,8 +138,114 @@
   // ---------- rendering ----------
   function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+  // ---------- outline (on this page) ----------
+  function slugify(text) {
+    return (text || '').toLowerCase().trim()
+      .replace(/[^\wЀ-ӿ \-]/g, '')   // keep latin/cyrillic word chars, spaces, hyphens
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  function clearOutline() {
+    els.tocList.innerHTML = '';
+    document.body.classList.remove('has-toc');
+    if (tocObserver) { tocObserver.disconnect(); tocObserver = null; }
+  }
+
+  // Real headings are mostly letters/digits and reasonably short. This drops
+  // ASCII-art / decorative lines that markdown sometimes parses as headings.
+  function looksLikeHeading(text) {
+    const t = (text || '').trim();
+    if (!t || t.length > 120) return false;
+    const nonspace = t.replace(/\s/g, '').length;
+    const alnum = (t.match(/[\p{L}\p{N}]/gu) || []).length;
+    return alnum >= 1 && nonspace > 0 && alnum / nonspace >= 0.4;
+  }
+
+  function buildOutline() {
+    const MAX_DEPTH = 3;   // show only the top N heading levels of the document
+    let real = [...els.content.querySelectorAll('h1, h2, h3, h4, h5, h6')]
+      .filter((h) => looksLikeHeading(h.textContent));
+    if (real.length < 2) return;   // nothing useful to show
+
+    let minLevel = Math.min(...real.map((h) => +h.tagName[1]));
+    // A lone top-level heading (e.g. the document title) shouldn't occupy a
+    // tree level — drop it and re-base the outline on the next level down.
+    if (real.filter((h) => +h.tagName[1] === minLevel).length === 1) {
+      real = real.filter((h) => +h.tagName[1] !== minLevel);
+      if (real.length < 2) return;
+      minLevel = Math.min(...real.map((h) => +h.tagName[1]));
+    }
+
+    const headings = real.filter((h) => +h.tagName[1] <= minLevel + (MAX_DEPTH - 1));
+    if (headings.length < 2) return;
+
+    const used = new Set();
+    for (let i = 0; i < headings.length; i++) {
+      const h = headings[i];
+      const base = slugify(h.textContent) || ('section-' + (i + 1));
+      let id = base, n = 1;
+      while (used.has(id)) id = base + '-' + (++n);
+      used.add(id);
+      h.id = id;
+    }
+
+    const frag = document.createDocumentFragment();
+    for (const h of headings) {
+      const lvl = +h.tagName[1];
+      const a = document.createElement('button');
+      a.type = 'button';
+      a.className = 'toc-link' + (lvl === minLevel ? ' toc-top' : '');
+      a.dataset.target = h.id;
+      a.textContent = h.textContent.trim();
+      a.title = a.textContent;
+      a.style.paddingLeft = (10 + (lvl - minLevel) * 14) + 'px';
+      frag.appendChild(a);
+    }
+    els.tocList.appendChild(frag);
+    document.body.classList.add('has-toc');
+    setupScrollSpy(headings);
+  }
+
+  function setActiveTocLink(id) {
+    const prev = els.tocList.querySelector('.toc-link.active');
+    if (prev) prev.classList.remove('active');
+    if (!id) return;
+    const cur = els.tocList.querySelector('.toc-link[data-target="' + id + '"]');
+    if (!cur) return;
+    cur.classList.add('active');
+    // keep the active entry within the outline's own scroll
+    const box = els.tocList.getBoundingClientRect(), it = cur.getBoundingClientRect();
+    if (it.top < box.top || it.bottom > box.bottom) cur.scrollIntoView({ block: 'nearest' });
+  }
+
+  // Highlight the heading nearest the top of the viewport as the page scrolls.
+  function setupScrollSpy(headings) {
+    if (!('IntersectionObserver' in window)) return;
+    const topbar = document.querySelector('.topbar');
+    const top = (topbar ? topbar.offsetHeight : 52) + 4;
+    const visible = new Set();
+    try {
+      tocObserver = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) visible.add(e.target.id);
+          else visible.delete(e.target.id);
+        }
+        let active = null;
+        for (const h of headings) { if (visible.has(h.id)) { active = h.id; break; } }
+        if (!active) {   // nothing in the band → the last heading scrolled past
+          for (const h of headings) { if (h.getBoundingClientRect().top < top + 1) active = h.id; }
+        }
+        setActiveTocLink(active);
+      }, { rootMargin: '-' + top + 'px 0px -65% 0px', threshold: 0 });
+      headings.forEach((h) => tocObserver.observe(h));
+    } catch (_) {}
+  }
+
   async function loadDoc(item) {
     els.content.innerHTML = '<p class="muted">Loading…</p>';
+    clearOutline();
     try {
       const blob = await ghApi(`/repos/${cfg.owner}/${cfg.repo}/git/blobs/${item.sha}`);
       const md = b64ToText(blob.content);
@@ -149,6 +257,7 @@
           try { hljs.highlightElement(el); } catch (_) {}
         }
       });
+      buildOutline();
       els.docTitle.textContent = item.name;
       window.scrollTo(0, 0);
       renderList(els.filter.value);
@@ -158,10 +267,14 @@
     }
   }
 
-  function openSidebar(open) {
-    els.sidebar.classList.toggle('open', open);
-    els.backdrop.classList.toggle('show', open);
+  // Only one drawer is open at a time on mobile; the backdrop tracks either.
+  function setOverlay(which) {
+    els.sidebar.classList.toggle('open', which === 'sidebar');
+    els.toc.classList.toggle('open', which === 'toc');
+    els.backdrop.classList.toggle('show', which === 'sidebar' || which === 'toc');
   }
+  function openSidebar(open) { setOverlay(open ? 'sidebar' : null); }
+  function openToc(open) { setOverlay(open ? 'toc' : null); }
 
   function toggleSettings(open) {
     const willOpen = open === undefined ? els.settingsPanel.classList.contains('hidden') : open;
@@ -254,7 +367,17 @@
   });
 
   els.menuBtn.addEventListener('click', () => openSidebar(!els.sidebar.classList.contains('open')));
-  els.backdrop.addEventListener('click', () => openSidebar(false));
+  els.tocBtn.addEventListener('click', () => openToc(!els.toc.classList.contains('open')));
+  els.tocList.addEventListener('click', (e) => {
+    const btn = e.target.closest('.toc-link');
+    if (!btn) return;
+    const target = document.getElementById(btn.dataset.target);
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setActiveTocLink(btn.dataset.target);
+    openToc(false);
+  });
+  els.backdrop.addEventListener('click', () => setOverlay(null));
   els.filter.addEventListener('input', () => renderList(els.filter.value));
   els.fontDec.addEventListener('click', () => bumpFontSize(-FONT_STEP));
   els.fontInc.addEventListener('click', () => bumpFontSize(FONT_STEP));
