@@ -8,6 +8,7 @@
   const THEME_KEY = 'docreader.theme';
   const THEMES = ['light', 'dark', 'auto'];
   const $ = (id) => document.getElementById(id);
+  const encodePath = (p) => p.split('/').map(encodeURIComponent).join('/');
 
   const els = {
     setup: $('setup'), setupForm: $('setupForm'), setupError: $('setupError'),
@@ -16,6 +17,7 @@
     sidebar: $('sidebar'), backdrop: $('backdrop'),
     toc: $('toc'), tocList: $('tocList'), tocBtn: $('tocBtn'),
     menuBtn: $('menuBtn'), authBtn: $('authBtn'),
+    reloadBtn: $('reloadBtn'), refreshListBtn: $('refreshListBtn'),
     settingsToggle: $('settingsToggle'), settingsPanel: $('settingsPanel'),
     fontDec: $('fontDec'), fontInc: $('fontInc'), fontVal: $('fontVal'),
     themeControls: $('themeControls'), themeColor: $('themeColor'),
@@ -300,12 +302,25 @@
     } catch (_) {}
   }
 
-  async function loadDoc(item) {
+  async function loadDoc(item, force) {
     els.content.innerHTML = '<p class="muted">Loading…</p>';
     clearOutline();
     try {
-      const blob = await ghApi(`/repos/${cfg.owner}/${cfg.repo}/git/blobs/${item.sha}`);
-      const md = b64ToText(blob.content);
+      let md;
+      if (force) {
+        // Resolve the path's current blob from the branch. The blob endpoint is
+        // content-addressed, so reusing the stored SHA would just re-serve the
+        // stale copy — fetch by path to pick up edits made on GitHub.
+        const branch = await resolveBranch();
+        const data = await ghApi(`/repos/${cfg.owner}/${cfg.repo}/contents/${encodePath(item.path)}?ref=${encodeURIComponent(branch)}`);
+        item.sha = data.sha;
+        md = data.content
+          ? b64ToText(data.content)   // files >1MB come back empty here → fall back to the blob
+          : b64ToText((await ghApi(`/repos/${cfg.owner}/${cfg.repo}/git/blobs/${item.sha}`)).content);
+      } else {
+        const blob = await ghApi(`/repos/${cfg.owner}/${cfg.repo}/git/blobs/${item.sha}`);
+        md = b64ToText(blob.content);
+      }
       els.content.innerHTML = DOMPurify.sanitize(marked.parse(md));
       // Highlight only blocks with an explicit language (```kotlin etc.).
       // Plain ``` without a language (e.g. ASCII diagrams) stays as readable text.
@@ -385,7 +400,7 @@
     const p = decodeURIComponent(location.hash.slice(1));
     if (!p) { showWelcome(); return; }
     const item = files.find((f) => f.path === p);
-    if (item) loadDoc(item);
+    if (item) { els.reloadBtn.disabled = false; loadDoc(item); }
     else showWelcome();
   }
 
@@ -395,10 +410,58 @@
   // lives in a drawer, so slide it out instead of showing an empty screen.
   function showWelcome() {
     clearOutline();
+    els.reloadBtn.disabled = true;   // no open document to refresh
     els.docTitle.textContent = 'Doc Reader';
     els.content.innerHTML = '<p class="muted">Select a document from the list.</p>';
     renderList(els.filter.value);
     if (isMobile()) openSidebar(true);
+  }
+
+  // Pull last-commit dates in the background, re-sorting/re-rendering the list
+  // progressively (debounced). Fire-and-forget — first paint stays instant and
+  // per-file errors degrade softly.
+  function loadMtimesInBackground() {
+    let pending = null;
+    const scheduleRerender = () => {
+      if (pending) return;
+      pending = setTimeout(() => { pending = null; renderList(els.filter.value); }, 250);
+    };
+    fetchMtimes(cfg.branch, scheduleRerender).finally(() => {
+      if (pending) { clearTimeout(pending); pending = null; }
+      renderList(els.filter.value);
+    });
+  }
+
+  // Re-fetch the file list (new/removed files, updated SHAs) without disturbing
+  // the open document; last-commit dates reload in the background as before.
+  async function refreshList() {
+    let next;
+    try {
+      next = await fetchFileList();
+    } catch (e) {
+      els.list.innerHTML = '<p class="error small">' + escapeHtml(e.message) + '</p>';
+      return;
+    }
+    files = next;
+    renderList(els.filter.value);
+    loadMtimesInBackground();
+  }
+
+  // Re-fetch the open document straight from the branch (force = bypass the blob
+  // cache by resolving the path's latest SHA first).
+  function reloadCurrentDoc() {
+    const p = decodeURIComponent(location.hash.slice(1));
+    const item = files.find((f) => f.path === p);
+    if (item) return loadDoc(item, true);
+  }
+
+  // Disable + spin an icon button for the duration of an async refresh.
+  async function withSpin(btn, fn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.classList.add('spinning');
+    try { await fn(); }
+    finally { btn.classList.remove('spinning'); btn.disabled = false; }
   }
 
   async function startReader() {
@@ -419,17 +482,8 @@
     }
     renderList('');
 
-    // Background: pull last-commit dates, re-sort/re-render progressively (debounced).
-    // Fire-and-forget — first paint stays instant and per-file errors degrade softly.
-    let pending = null;
-    const scheduleRerender = () => {
-      if (pending) return;
-      pending = setTimeout(() => { pending = null; renderList(els.filter.value); }, 250);
-    };
-    fetchMtimes(cfg.branch, scheduleRerender).finally(() => {
-      if (pending) { clearTimeout(pending); pending = null; }
-      renderList(els.filter.value);
-    });
+    // Background: pull last-commit dates, re-sort/re-render progressively.
+    loadMtimesInBackground();
 
     if (location.hash.slice(1)) onRoute();
     else showWelcome();
@@ -464,6 +518,8 @@
   });
 
   els.menuBtn.addEventListener('click', () => openSidebar(!els.sidebar.classList.contains('open')));
+  els.reloadBtn.addEventListener('click', () => withSpin(els.reloadBtn, reloadCurrentDoc));
+  els.refreshListBtn.addEventListener('click', () => withSpin(els.refreshListBtn, refreshList));
   els.tocBtn.addEventListener('click', () => openToc(!els.toc.classList.contains('open')));
   els.tocList.addEventListener('click', (e) => {
     const btn = e.target.closest('.toc-link');

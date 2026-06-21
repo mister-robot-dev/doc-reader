@@ -61,12 +61,15 @@ body {
 .topbar h1 { flex: 1; font-size: 17px; margin: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .icon-btn { font-size: 20px; background: none; border: none; color: var(--text); cursor: pointer; padding: 8px; line-height: 1; }
 .icon-btn:disabled { opacity: .35; cursor: default; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.icon-btn.spinning svg { animation: spin .8s linear infinite; }
 .font-btn { font-size: 15px; font-weight: 600; padding: 8px 6px; min-width: 32px; }
 .settings-toggle { display: inline-flex; align-items: center; gap: 1px; }
 .settings-toggle .caret { font-size: 11px; transition: transform .15s ease; }
 .settings-toggle.open .caret { transform: rotate(180deg); }
 /* Hierarchy (outline) button sits at the far right with extra breathing room */
 .topbar .toc-btn { margin-left: 10px; margin-right: 8px; }
+.topbar .reload-btn { display: inline-flex; align-items: center; }
 
 /* ---- settings panel ---- */
 .settings-panel {
@@ -98,6 +101,10 @@ body {
   position: sticky; top: calc(52px + env(safe-area-inset-top)); padding: 12px;
   display: flex; flex-direction: column; overflow: hidden;
 }
+.sidebar-head { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+.sidebar-head .filter { flex: 1 1 auto; width: auto; margin-bottom: 0; }
+.refresh-list-btn { flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--muted); }
+.refresh-list-btn:hover { color: var(--text); }
 .filter {
   flex: 0 0 auto;
   width: 100%; padding: 8px 10px; margin-bottom: 10px; border: 1px solid var(--border);
