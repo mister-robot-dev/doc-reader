@@ -25,7 +25,7 @@
   marked.setOptions({ gfm: true, breaks: false });
 
   let cfg = null;     // { owner, repo, branch, path, token }
-  let files = [];     // [{ path, sha, name, group }]
+  let files = [];     // [{ path, sha, name, group, mtime }]  mtime: ISO string | null
   let tocObserver = null;   // IntersectionObserver for the outline scroll-spy
 
   // ---------- config ----------
@@ -129,10 +129,67 @@
         const rel = prefix ? t.path.slice(prefix.length + 1) : t.path;
         const parts = rel.split('/');
         const name = parts.pop().replace(/\.(md|markdown)$/i, '');
-        return { path: t.path, sha: t.sha, name, group: parts.join('/') };
+        return { path: t.path, sha: t.sha, name, group: parts.join('/'), mtime: null };
       });
     items.sort((a, b) => (a.group + '/' + a.name).localeCompare(b.group + '/' + b.name, 'en'));
     return items;
+  }
+
+  // Run `worker` over `items` with at most `limit` tasks in flight at once.
+  async function runPool(items, limit, worker) {
+    let i = 0;
+    const next = async () => {
+      while (i < items.length) {
+        const idx = i++;
+        await worker(items[idx], idx);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, next));
+  }
+
+  // Pull each file's last-commit date in the background and store it on f.mtime.
+  // Per-file try/catch keeps one bad/missing file from sinking the whole batch.
+  async function fetchMtimes(branch, onProgress) {
+    await runPool(files, 6, async (f) => {
+      try {
+        const commits = await ghApi(`/repos/${cfg.owner}/${cfg.repo}/commits`
+          + `?path=${encodeURIComponent(f.path)}&sha=${encodeURIComponent(branch)}&per_page=1`);
+        const date = commits && commits[0] && commits[0].commit
+          && commits[0].commit.committer && commits[0].commit.committer.date;
+        f.mtime = date || null;
+      } catch (_) {
+        f.mtime = null;
+      }
+      if (onProgress) onProgress();
+    });
+  }
+
+  // Sort by last-modified, newest first; undated files sink, then alphabetical tiebreak.
+  function byMtimeDesc(a, b) {
+    const ta = a.mtime ? Date.parse(a.mtime) : -Infinity;
+    const tb = b.mtime ? Date.parse(b.mtime) : -Infinity;
+    if (tb !== ta) return tb - ta;
+    return a.name.localeCompare(b.name, 'en');
+  }
+
+  // Newest mtime among a group's files (for ordering folder headers).
+  function groupNewest(items) {
+    let max = -Infinity;
+    for (const f of items) {
+      const t = f.mtime ? Date.parse(f.mtime) : -Infinity;
+      if (t > max) max = t;
+    }
+    return max;
+  }
+
+  // Compact local time: 2026-06-18 09:21
+  function fmtMtime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+         + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
   }
 
   // ---------- rendering ----------
@@ -292,7 +349,11 @@
       if (q && !((f.name + ' ' + f.path).toLowerCase().includes(q))) continue;
       (groups[f.group] = groups[f.group] || []).push(f);
     }
-    const names = Object.keys(groups).sort((a, b) => a.localeCompare(b, 'en'));
+    // Folders ordered by their freshest file (newest on top); alphabetical tiebreak.
+    const names = Object.keys(groups).sort((a, b) => {
+      const d = groupNewest(groups[b]) - groupNewest(groups[a]);
+      return d !== 0 ? d : a.localeCompare(b, 'en');
+    });
     if (!names.length) { els.list.innerHTML = '<p class="muted small">Nothing found</p>'; return; }
     for (const g of names) {
       if (g) {
@@ -300,11 +361,21 @@
         h.className = 'group-title'; h.textContent = g;
         els.list.appendChild(h);
       }
-      for (const f of groups[g]) {
+      for (const f of groups[g].slice().sort(byMtimeDesc)) {
         const a = document.createElement('a');
         a.className = 'file-link' + (f.path === cur ? ' active' : '');
-        a.textContent = f.name;
         a.href = '#' + encodeURIComponent(f.path);
+        const name = document.createElement('span');
+        name.className = 'file-name';
+        name.textContent = f.name;
+        a.appendChild(name);
+        const meta = fmtMtime(f.mtime);
+        if (meta) {
+          const m = document.createElement('span');
+          m.className = 'file-meta';
+          m.textContent = meta;
+          a.appendChild(m);
+        }
         els.list.appendChild(a);
       }
     }
@@ -334,6 +405,19 @@
       return;
     }
     renderList('');
+
+    // Background: pull last-commit dates, re-sort/re-render progressively (debounced).
+    // Fire-and-forget — first paint stays instant and per-file errors degrade softly.
+    let pending = null;
+    const scheduleRerender = () => {
+      if (pending) return;
+      pending = setTimeout(() => { pending = null; renderList(els.filter.value); }, 250);
+    };
+    fetchMtimes(cfg.branch, scheduleRerender).finally(() => {
+      if (pending) { clearTimeout(pending); pending = null; }
+      renderList(els.filter.value);
+    });
+
     if (location.hash.slice(1)) onRoute();
     else location.hash = encodeURIComponent(files[0].path);
   }
