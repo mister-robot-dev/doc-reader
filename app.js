@@ -383,9 +383,22 @@
 
   function onRoute() {
     const p = decodeURIComponent(location.hash.slice(1));
-    if (!p) return;
+    if (!p) { showWelcome(); return; }
     const item = files.find((f) => f.path === p);
     if (item) loadDoc(item);
+    else showWelcome();
+  }
+
+  const isMobile = () => window.matchMedia('(max-width: 768px)').matches;
+
+  // No document selected: invite the user to pick one. On mobile the file list
+  // lives in a drawer, so slide it out instead of showing an empty screen.
+  function showWelcome() {
+    clearOutline();
+    els.docTitle.textContent = 'Doc Reader';
+    els.content.innerHTML = '<p class="muted">Select a document from the list.</p>';
+    renderList(els.filter.value);
+    if (isMobile()) openSidebar(true);
   }
 
   async function startReader() {
@@ -419,7 +432,7 @@
     });
 
     if (location.hash.slice(1)) onRoute();
-    else location.hash = encodeURIComponent(files[0].path);
+    else showWelcome();
   }
 
   // ---------- events ----------
