@@ -58,28 +58,47 @@ body {
   height: calc(52px + env(safe-area-inset-top));
   background: var(--bg-alt); border-bottom: 1px solid var(--border);
 }
-.topbar h1 { flex: 1; font-size: 17px; margin: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar h1 { flex: 0 1 auto; min-width: 0; font-size: 17px; margin: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Pushes the outline button to the far right so the reload button stays pinned
+   to the title and doesn't shift when the outline button toggles on refresh. */
+.topbar-spacer { flex: 1 1 auto; }
 .icon-btn { font-size: 20px; background: none; border: none; color: var(--text); cursor: pointer; padding: 8px; line-height: 1; }
 .icon-btn:disabled { opacity: .35; cursor: default; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .icon-btn.spinning svg { animation: spin .8s linear infinite; }
 .font-btn { font-size: 15px; font-weight: 600; padding: 8px 6px; min-width: 32px; }
-.settings-toggle { display: inline-flex; align-items: center; gap: 1px; }
-.settings-toggle .caret { font-size: 11px; transition: transform .15s ease; }
-.settings-toggle.open .caret { transform: rotate(180deg); }
 /* Hierarchy (outline) button sits at the far right with extra breathing room */
 .topbar .toc-btn { margin-left: 10px; margin-right: 8px; }
 .topbar .reload-btn { display: inline-flex; align-items: center; }
 
 /* ---- settings panel ---- */
+/* A centered modal: its placement is independent of the (sometimes hidden)
+   Settings button, and the dimmed backdrop keeps it legible over any content. */
+.settings-backdrop {
+  position: fixed; inset: 0; z-index: 49;
+  background: rgba(0, 0, 0, .3);
+  -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px);
+  animation: settings-fade .15s ease;
+}
 .settings-panel {
   position: fixed; z-index: 50;
-  top: calc(52px + env(safe-area-inset-top)); right: 12px;
-  min-width: 220px; padding: 12px;
-  background: var(--bg-alt); border: 1px solid var(--border);
-  border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.28);
-  display: flex; flex-direction: column; gap: 10px;
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: min(360px, calc(100vw - 32px)); padding: 16px;
+  background: var(--bg-alt);
+  border: 2px solid var(--accent);
+  border-radius: 16px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .5);
+  display: flex; flex-direction: column; gap: 12px;
+  animation: settings-pop .16s cubic-bezier(.2, .9, .3, 1.3);
 }
+@keyframes settings-fade { from { opacity: 0; } }
+@keyframes settings-pop {
+  from { opacity: 0; transform: translate(-50%, -46%) scale(.96); }
+}
+.settings-head { display: flex; align-items: center; justify-content: space-between; }
+.settings-title { font-size: 16px; font-weight: 600; }
+.settings-close { font-size: 16px; color: var(--muted); padding: 4px 6px; margin: -4px -4px -4px 0; }
+.settings-close:hover { color: var(--text); }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .settings-label { font-size: 14px; color: var(--muted); }
 .font-controls { display: inline-flex; align-items: center; gap: 4px; }
@@ -119,6 +138,8 @@ body {
 .sidebar-btn .ico { flex: 0 0 auto; color: var(--muted); }
 .sidebar-btn:hover { border-color: var(--accent); }
 .sidebar-btn:hover .ico { color: var(--accent); }
+/* Settings lives at the foot of the sidebar, below the scrolling file list. */
+.sidebar-foot { flex: 0 0 auto; margin-top: 10px; }
 .group-title { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 12px 4px 4px; }
 .file-link { display: flex; flex-direction: column; gap: 2px;
   padding: 8px 10px; border-radius: 8px; color: var(--text); text-decoration: none; }

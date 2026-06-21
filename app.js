@@ -19,6 +19,7 @@
     menuBtn: $('menuBtn'), authBtn: $('authBtn'),
     reloadBtn: $('reloadBtn'), refreshListBtn: $('refreshListBtn'),
     settingsToggle: $('settingsToggle'), settingsPanel: $('settingsPanel'),
+    settingsBackdrop: $('settingsBackdrop'), settingsClose: $('settingsClose'),
     fontDec: $('fontDec'), fontInc: $('fontInc'), fontVal: $('fontVal'),
     themeControls: $('themeControls'), themeColor: $('themeColor'),
     mdLight: $('mdLight'), mdDark: $('mdDark'), hlLight: $('hlLight'), hlDark: $('hlDark'),
@@ -351,6 +352,7 @@
   function toggleSettings(open) {
     const willOpen = open === undefined ? els.settingsPanel.classList.contains('hidden') : open;
     els.settingsPanel.classList.toggle('hidden', !willOpen);
+    els.settingsBackdrop.classList.toggle('hidden', !willOpen);
     els.settingsToggle.classList.toggle('open', willOpen);
     els.settingsToggle.setAttribute('aria-expanded', String(willOpen));
   }
@@ -361,7 +363,7 @@
     const cur = decodeURIComponent(location.hash.slice(1));
     const groups = {};
     for (const f of files) {
-      if (q && !((f.name + ' ' + f.path).toLowerCase().includes(q))) continue;
+      if (q && !f.name.toLowerCase().includes(q)) continue;
       (groups[f.group] = groups[f.group] || []).push(f);
     }
     // Folders ordered by their freshest file (newest on top); alphabetical tiebreak.
@@ -538,7 +540,13 @@
     const btn = e.target.closest('.seg-btn');
     if (btn) applyTheme(btn.dataset.theme);
   });
-  els.settingsToggle.addEventListener('click', (e) => { e.stopPropagation(); toggleSettings(); });
+  els.settingsToggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleSettings();
+    // Opening settings slides the drawer shut so the panel isn't hidden behind it.
+    if (els.settingsToggle.classList.contains('open')) openSidebar(false);
+  });
+  els.settingsClose.addEventListener('click', () => toggleSettings(false));
   document.addEventListener('click', (e) => {
     if (els.settingsPanel.classList.contains('hidden')) return;
     if (els.settingsPanel.contains(e.target) || els.settingsToggle.contains(e.target)) return;
