@@ -71,6 +71,12 @@ body {
 .topbar .toc-btn { margin-left: 10px; margin-right: 8px; }
 .topbar .reload-btn { display: inline-flex; align-items: center; }
 
+/* ---- contextual "back to previous doc" bar ----
+   Sits just under the topbar instead of crowding the menu button. It only
+   exists on mobile (where there's no browser back); on desktop the browser
+   back control and the always-visible sidebar cover this. */
+.back-bar { display: none; }
+
 /* ---- settings panel ---- */
 /* A centered modal: its placement is independent of the (sometimes hidden)
    Settings button, and the dimmed backdrop keeps it legible over any content. */
@@ -200,5 +206,28 @@ body:not(.has-toc) .toc { display: none; }
   body.has-toc .toc-btn { display: inline-flex; align-items: center; }
   .backdrop.show { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 35; }
   .content { padding: 16px; }
+
+  .back-bar {
+    position: fixed; left: 0; right: 0; z-index: 25;
+    top: calc(52px + env(safe-area-inset-top));
+    display: flex; align-items: center; gap: 6px;
+    width: 100%; padding: 9px 14px;
+    border: none; border-bottom: 1px solid var(--border);
+    background: var(--bg-alt); color: var(--muted);
+    font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+    transition: transform .22s ease;
+  }
+  .back-bar-ico, .back-bar-text { flex: 0 0 auto; }
+  .back-bar-name {
+    flex: 0 1 auto; min-width: 0; color: var(--text); font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* Tucked up behind the topbar when there's no history, or while reading down. */
+  body:not(.has-back) .back-bar,
+  body.has-back.back-hidden .back-bar {
+    transform: translateY(calc(-100% - 2px)); pointer-events: none;
+  }
+  /* Reserve space at the very top of the doc so the bar never hides the title. */
+  body.has-back .content { padding-top: 56px; }
 }
 @media (min-width: 769px) { #menuBtn { display: none; } }

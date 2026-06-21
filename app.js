@@ -16,7 +16,7 @@
     list: $('fileList'), content: $('content'), filter: $('filter'),
     sidebar: $('sidebar'), backdrop: $('backdrop'),
     toc: $('toc'), tocList: $('tocList'), tocBtn: $('tocBtn'),
-    menuBtn: $('menuBtn'), authBtn: $('authBtn'),
+    menuBtn: $('menuBtn'), backBar: $('backBar'), backBarName: $('backBarName'), authBtn: $('authBtn'),
     reloadBtn: $('reloadBtn'), refreshListBtn: $('refreshListBtn'),
     settingsToggle: $('settingsToggle'), settingsPanel: $('settingsPanel'),
     settingsBackdrop: $('settingsBackdrop'), settingsClose: $('settingsClose'),
@@ -30,6 +30,12 @@
   let cfg = null;     // { owner, repo, branch, path, token }
   let files = [];     // [{ path, sha, name, group, mtime }]  mtime: ISO string | null
   let tocObserver = null;   // IntersectionObserver for the outline scroll-spy
+  let navStack = [];        // back-stack of previously viewed doc paths
+  let currentPath = '';     // path of the document on screen
+  let navigatingBack = false;   // set while the back bar drives a hash change
+  let resetStack = false;       // set when picking a file from the sidebar (fresh history)
+  let lastScrollY = 0;      // for hiding/showing the back bar on scroll
+  let backBarTicking = false;
 
   // ---------- config ----------
   function loadCfg() {
@@ -198,6 +204,68 @@
   // ---------- rendering ----------
   function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+  // Set to the heading slug to scroll to once the next document finishes loading
+  // (when following a cross-document link like `other.md#section`).
+  let pendingScrollId = null;
+
+  // Resolve a relative link from the directory of `fromPath` to a repo path.
+  // Leading "/" is repo-root-relative; "." / ".." segments are collapsed.
+  function resolveRepoPath(fromPath, rel) {
+    let out;
+    if (rel.startsWith('/')) { out = []; rel = rel.replace(/^\/+/, ''); }
+    else out = fromPath.split('/').slice(0, -1);
+    for (let seg of rel.split('/')) {
+      try { seg = decodeURIComponent(seg); } catch (_) {}   // hrefs may be %-encoded
+      if (seg === '' || seg === '.') continue;
+      if (seg === '..') { if (out.length) out.pop(); continue; }
+      out.push(seg);
+    }
+    return out.join('/');
+  }
+
+  const isMdPath = (p) => /\.(md|markdown)$/i.test(p);
+  // http:, mailto:, tel:, data:, … and protocol-relative //host links are external.
+  const isExternalHref = (h) => /^[a-z][a-z0-9+.\-]*:/i.test(h) || h.startsWith('//');
+
+  // Walk the rendered links and wire up the relative ones:
+  //  - in-page "#anchor" → scroll within the current doc (no SPA route change)
+  //  - relative "*.md" that exists in the repo → open it inside the reader
+  //  - relative "*.md" outside the loaded set → open on GitHub in a new tab
+  //  - external links → open in a new tab so the reader isn't navigated away
+  function processContentLinks(fromPath) {
+    els.content.querySelectorAll('a[href]').forEach((a) => {
+      const raw = a.getAttribute('href') || '';
+      if (!raw) return;
+      if (isExternalHref(raw)) { a.target = '_blank'; a.rel = 'noopener noreferrer'; return; }
+      if (raw.startsWith('#')) {                 // in-page anchor
+        a.dataset.docPath = fromPath;
+        a.dataset.docAnchor = raw.slice(1);
+        return;
+      }
+      const h = raw.indexOf('#');
+      const beforeHash = h === -1 ? raw : raw.slice(0, h);
+      const frag = h === -1 ? '' : raw.slice(h + 1);
+      const pathPart = beforeHash.split('?')[0];
+      if (!isMdPath(pathPart)) return;           // not a markdown link — leave it be
+      const target = resolveRepoPath(fromPath, pathPart);
+      if (files.some((f) => f.path === target)) {
+        a.dataset.docPath = target;
+        if (frag) { try { a.dataset.docAnchor = decodeURIComponent(frag); } catch (_) { a.dataset.docAnchor = frag; } }
+        a.href = '#' + encodeURIComponent(target);
+        a.classList.add('doc-link');
+      } else if (cfg && cfg.owner && cfg.repo) { // fallback: view it on GitHub
+        a.href = `https://github.com/${cfg.owner}/${cfg.repo}/blob/${encodeURIComponent(cfg.branch || 'HEAD')}/${encodePath(target)}`;
+        a.target = '_blank'; a.rel = 'noopener noreferrer';
+      }
+    });
+  }
+
+  function scrollToHeading(idOrSlug) {
+    if (!idOrSlug) return;
+    const el = document.getElementById(idOrSlug) || document.getElementById(slugify(idOrSlug));
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   // ---------- outline (on this page) ----------
   function slugify(text) {
     return (text || '').toLowerCase().trim()
@@ -223,6 +291,20 @@
     return alnum >= 1 && nonspace > 0 && alnum / nonspace >= 0.4;
   }
 
+  // Give every heading a unique slug id so links (cross-doc "#anchor" and in-page
+  // jumps) and the outline can target them. GitHub-style: slug of the text, with
+  // a numeric suffix on collisions.
+  function assignHeadingIds() {
+    const used = new Set();
+    [...els.content.querySelectorAll('h1, h2, h3, h4, h5, h6')].forEach((h, i) => {
+      const base = slugify(h.textContent) || ('section-' + (i + 1));
+      let id = base, n = 1;
+      while (used.has(id)) id = base + '-' + (++n);
+      used.add(id);
+      h.id = id;
+    });
+  }
+
   function buildOutline() {
     const MAX_DEPTH = 3;   // show only the top N heading levels of the document
     let real = [...els.content.querySelectorAll('h1, h2, h3, h4, h5, h6')]
@@ -240,16 +322,6 @@
 
     const headings = real.filter((h) => +h.tagName[1] <= minLevel + (MAX_DEPTH - 1));
     if (headings.length < 2) return;
-
-    const used = new Set();
-    for (let i = 0; i < headings.length; i++) {
-      const h = headings[i];
-      const base = slugify(h.textContent) || ('section-' + (i + 1));
-      let id = base, n = 1;
-      while (used.has(id)) id = base + '-' + (++n);
-      used.add(id);
-      h.id = id;
-    }
 
     const frag = document.createDocumentFragment();
     for (const h of headings) {
@@ -304,6 +376,7 @@
   }
 
   async function loadDoc(item, force) {
+    const scrollId = pendingScrollId; pendingScrollId = null;
     els.content.innerHTML = '<p class="muted">Loading…</p>';
     clearOutline();
     try {
@@ -330,9 +403,13 @@
           try { hljs.highlightElement(el); } catch (_) {}
         }
       });
+      assignHeadingIds();
+      processContentLinks(item.path);
       buildOutline();
       els.docTitle.textContent = item.name;
       window.scrollTo(0, 0);
+      lastScrollY = 0;
+      if (scrollId) requestAnimationFrame(() => scrollToHeading(scrollId));
       renderList(els.filter.value);
       openSidebar(false);
     } catch (e) {
@@ -398,12 +475,67 @@
     }
   }
 
+  const docName = (p) => {
+    const f = files.find((x) => x.path === p);
+    return f ? f.name : p.split('/').pop().replace(/\.(md|markdown)$/i, '');
+  };
+
+  // The back bar shows the name of the doc we'd return to, and disappears when
+  // there's nowhere to go back. (Lives under the topbar so it doesn't crowd the
+  // menu button — see .back-bar in styles.css.)
+  function updateBackBar() {
+    if (navStack.length) {
+      els.backBarName.textContent = docName(navStack[navStack.length - 1]);
+      document.body.classList.add('has-back');
+      document.body.classList.remove('back-hidden');   // reveal on every navigation
+    } else {
+      document.body.classList.remove('has-back', 'back-hidden');
+    }
+  }
+
+  // Hide the back bar while scrolling down (more reading room), reveal it when
+  // scrolling back up — and always keep it visible near the top of the doc.
+  function onScrollBackBar() {
+    if (backBarTicking) return;
+    backBarTicking = true;
+    requestAnimationFrame(() => {
+      backBarTicking = false;
+      if (!document.body.classList.contains('has-back')) { lastScrollY = window.scrollY; return; }
+      const y = window.scrollY;
+      if (y < 64) document.body.classList.remove('back-hidden');
+      else if (Math.abs(y - lastScrollY) > 6) document.body.classList.toggle('back-hidden', y > lastScrollY);
+      lastScrollY = y;
+    });
+  }
+
+  // Step back to the previously viewed document. The reader runs as a
+  // standalone PWA on iOS where there's no browser back control, so we keep
+  // our own in-app history instead of relying on history.back().
+  function goBack() {
+    if (!navStack.length) return;
+    navigatingBack = true;
+    location.hash = encodeURIComponent(navStack.pop());
+  }
+
   function onRoute() {
+    const fresh = resetStack; resetStack = false;   // consumed once per navigation
     const p = decodeURIComponent(location.hash.slice(1));
-    if (!p) { showWelcome(); return; }
+    if (!p) { currentPath = ''; navigatingBack = false; updateBackBar(); showWelcome(); return; }
     const item = files.find((f) => f.path === p);
-    if (item) { els.reloadBtn.disabled = false; loadDoc(item); }
-    else showWelcome();
+    if (item) {
+      // A sidebar pick starts fresh history; otherwise push the doc we're
+      // leaving onto the back-stack (unless this is a back step or a reload).
+      if (fresh) navStack = [];
+      else if (p !== currentPath && !navigatingBack && currentPath) navStack.push(currentPath);
+      currentPath = p;
+      navigatingBack = false;
+      updateBackBar();
+      els.reloadBtn.disabled = false;
+      loadDoc(item);
+    } else {
+      navigatingBack = false;
+      showWelcome();
+    }
   }
 
   const isMobile = () => window.matchMedia('(max-width: 768px)').matches;
@@ -468,6 +600,7 @@
 
   async function startReader() {
     show('reader');
+    navStack = []; currentPath = ''; updateBackBar();   // fresh history per connection
     els.content.innerHTML = '<p class="muted">Loading list…</p>';
     try {
       files = await fetchFileList();
@@ -520,6 +653,18 @@
   });
 
   els.menuBtn.addEventListener('click', () => openSidebar(!els.sidebar.classList.contains('open')));
+  els.backBar.addEventListener('click', goBack);
+  window.addEventListener('scroll', onScrollBackBar, { passive: true });
+  // Opening a file from the sidebar starts a fresh back-stack (it becomes the
+  // root). Only plain left-clicks to a different file count — a modified click
+  // opens a new tab and must not leave a stale flag behind.
+  els.list.addEventListener('click', (e) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const a = e.target.closest('.file-link');
+    if (!a || !els.list.contains(a)) return;
+    const path = decodeURIComponent((a.getAttribute('href') || '#').slice(1));
+    if (path && path !== currentPath) resetStack = true;
+  });
   els.reloadBtn.addEventListener('click', () => withSpin(els.reloadBtn, reloadCurrentDoc));
   els.refreshListBtn.addEventListener('click', () => withSpin(els.refreshListBtn, refreshList));
   els.tocBtn.addEventListener('click', () => openToc(!els.toc.classList.contains('open')));
@@ -531,6 +676,20 @@
     target.scrollIntoView({ behavior: 'smooth', block: 'start' });
     setActiveTocLink(btn.dataset.target);
     openToc(false);
+  });
+  // Follow in-app links rendered inside a document. Modified clicks (new tab),
+  // middle clicks, etc. fall through to the browser via the rewritten href.
+  els.content.addEventListener('click', (e) => {
+    const a = e.target.closest('a');
+    if (!a || !els.content.contains(a)) return;
+    const path = a.dataset.docPath;
+    if (path == null) return;   // external / non-doc link: let the browser handle it
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    const anchor = a.dataset.docAnchor || '';
+    if (path === decodeURIComponent(location.hash.slice(1))) { scrollToHeading(anchor); return; }
+    pendingScrollId = anchor || null;
+    location.hash = encodeURIComponent(path);
   });
   els.backdrop.addEventListener('click', () => setOverlay(null));
   els.filter.addEventListener('input', () => renderList(els.filter.value));
